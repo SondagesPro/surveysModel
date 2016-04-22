@@ -33,7 +33,7 @@ class surveysModel extends PluginBase {
         $this->subscribe('afterPluginLoad','addNeededJs');
         // The script need some PHP , then doing it in ajax
         $this->subscribe('newDirectRequest');
-        // Fixe Permission when happen
+        // Fix Permission when happen
         $this->subscribe('beforeHasPermission');
 
     }
@@ -46,11 +46,11 @@ class surveysModel extends PluginBase {
             ),
             'options' => array(1), // This broke if there are no user
             'default'=> null,
-            'help'=> "Super admin have always this right."
+            'help'=> "Super admin have always this right. This doesn't allow a user to create survey, only set a survey to model."
         ),
         'users' => array(
             'type' => 'select',
-            'label'=> "User can use (copy and view) survey model",
+            'label'=> "User can use (copy and view) survey model.",
             'htmlOptions'=>array(
                 'multiple'=>'multiple',
             ),
@@ -66,9 +66,7 @@ class surveysModel extends PluginBase {
     public function beforeSurveySettings()
     {
         $iUserId = Yii::app()->session['loginID'];
-        $aSettings=$this->getPluginSettings(true);
-
-        if(in_array($iUserId,$aSettings['managers']['current']))
+        if($this->haveManageRight($iUserId))
         {
             $this->event->set("surveysettings.{$this->id}", array(
                 'name' => get_class($this),
@@ -90,13 +88,43 @@ class surveysModel extends PluginBase {
     public function newSurveySettings()
     {
         $iUserId = Yii::app()->session['loginID'];
-        $aSettings=$this->getPluginSettings(true);
-        if(in_array($iUserId,$aSettings['managers']['current']) && !empty($this->getEvent()->get('settings')))
+        $iSurveyId=$this->getEvent()->get('survey');
+        if($this->haveManageRight($iUserId) && !empty($this->getEvent()->get('settings')))
         {
-            tracevar($this->getEvent()->get('settings'));
             foreach ($this->getEvent()->get('settings') as $name => $value)
             {
-                $this->set($name, $value, 'Survey', $this->getEvent()->get('survey'));
+                $this->set($name, $value, 'Survey', $iSurveyId);
+                // update surveymodel read : for the listing survey
+                // Don't test any user right on user : plugin manage all users
+                if($name=='ismodel')
+                {
+                    $aUsers=array_merge($this->get('users'),$this->get('managers'));
+                    if($value)
+                    {
+                        foreach($aUsers as $iUser)
+                        {
+                            //~ // Test if have surveymodel read, see #11018
+                            $oSurveycontentPermission=Permission::model()->find("entity_id=:entity_id and entity='survey' and uid=:userid and permission='surveymodel'",array(":entity_id"=>$iSurveyId,":userid"=>$iUser));
+                            if(!$oSurveycontentPermission)
+                            {
+                                $oSurveycontentPermission=new Permission;
+                                $oSurveycontentPermission->entity_id=$iSurveyId;
+                                $oSurveycontentPermission->entity='survey';
+                                $oSurveycontentPermission->uid=$iUser;
+                                $oSurveycontentPermission->permission='surveymodel';
+                            }
+                            $oSurveycontentPermission->read_p=1;
+                            if(!$oSurveycontentPermission->save())
+                            {
+                                tracevar($oSurveycontentPermission->getErrors());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Permission::model()->deleteAll("entity_id=:entity_id and entity='survey' and permission='surveymodel'",array(":entity_id"=>$iSurveyId));
+                    }
+                }
             }
         }
     }
@@ -106,7 +134,7 @@ class surveysModel extends PluginBase {
     */
     public function beforeHasPermission()
     {
-        if($this->event->get('sEntityName')!="Survey"){
+        if($this->event->get('sEntityName')!="survey"){
             return; // Go after only if it Survey
         }
         $iSurveyId=$this->event->get('iEntityID');
@@ -124,17 +152,17 @@ class surveysModel extends PluginBase {
         {
             $iUserID=Yii::app()->session['loginID'];
         }
-        $aSettings=$this->getPluginSettings(true);
+
         if(in_array($sCRUD,array('read','export')))
         {
-            if(in_array($iUserId,$aSettings['managers']['current']) || in_array($iUserId,$aSettings['users']['current']))
+            if($this->haveReadRight($iUserID))
             {
                 $this->event->set('bPermission',true);
             }
         }
         elseif(in_array($sCRUD,array('create','update','delete','import')))
         {
-            if(in_array($iUserId,$aSettings['managers']['current']))
+            if($this->haveManageRight($iUserID))
             {
                 $this->event->set('bPermission',true);
             }
@@ -154,7 +182,14 @@ class surveysModel extends PluginBase {
         $aSettings=$this->getPluginSettings(true);
         if(in_array($iUserId,$aSettings['managers']['current']) || in_array($iUserId,$aSettings['users']['current']))
         {
-            $this->getMasterSurvey();
+            switch ($sAction)
+            {
+                //~ 'widgetList':
+                    //~ $this->listMasterSurvey();
+                    //~ break;
+                default:
+                    $this->getMasterSurvey();
+            }
         }
     }
 
@@ -209,7 +244,6 @@ class surveysModel extends PluginBase {
      */
     public function getPluginSettings($getValues=true)
     {
-
         $pluginSettings=parent::getPluginSettings($getValues);
 
         $oUsers = User::model()->findAll();
@@ -245,10 +279,73 @@ class surveysModel extends PluginBase {
             $pluginSettings['users']['type']='info';
             $pluginSettings['users']['content']='<p class="alert alert-info">All of your users are super-admin.</p>';
         }
-
         return $pluginSettings;
     }
 
+    /**
+     * Extend PluginBase function
+     * Fix survey permission on model users save
+     * @param type $settings
+     */
+    public function saveSettings($settings)
+    {
+
+        // Get the "model" survey
+        $oSurveysModels=PluginSetting::model()->findAll(array(
+            "select"=>"model_id",
+            "condition"=>"plugin_id=:plugin_id AND model=:model  AND ".Yii::app()->db->quoteColumnName("key")."=:setting AND ".Yii::app()->db->quoteColumnName("value")." LIKE :value",
+            "params"=>array(":plugin_id"=>$this->id,":model"=>"Survey",":setting"=>'ismodel',":value"=>"%1%")
+        ));
+                            tracevar($oSurveysModels);
+
+        if($oSurveysModels)
+        {
+            $aModelUsers=array_merge ($settings['manager'],$settings['users'] );
+            foreach($oSurveysModels as $oSurveyModel)
+            {
+                // Remove Persmission for whole users
+                Permission::model()->deleteAll("entity_id=:entity_id and entity='survey' and permission='surveymodel'",array(":entity_id"=>$oSurveyModel->model_id));
+                if(!empty($aModelUsers))
+                {
+                    foreach($aModelUsers as $iModelUser)
+                    {
+                        $oSurveycontentPermission=new Permission;
+                        $oSurveycontentPermission->entity_id=$oSurveyModel->model_id;
+                        $oSurveycontentPermission->entity='survey';
+                        $oSurveycontentPermission->uid=$iModelUser;
+                        $oSurveycontentPermission->permission='surveymodel';
+                        $oSurveycontentPermission->read_p=1;
+                        if(!$oSurveycontentPermission->save())
+                        {
+                            tracevar($oSurveycontentPermission->getErrors());
+                        }
+                        else
+                        {
+                            tracevar($oSurveycontentPermission);
+                        }
+                    }
+                }
+            }
+
+        }
+        parent::saveSettings($settings);
+    }
+    /**
+     * Test is actual user have read right on models
+     * @return boolean
+     */
+    private function haveReadRight($iUserID)
+    {
+        return in_array($iUserID,$this->get('users')) || $this->haveManageRight($iUserID);
+    }
+    /**
+     * Test is actual user have manage right on models
+     * @return boolean
+     */
+    private function haveManageRight($iUserID)
+    {
+        return in_array($iUserID,$this->get('managers')) || Permission::model()->hasGlobalPermission("superadmin",'read', $iUserID);
+    }
     /**
      * render an object in json
      */
