@@ -5,7 +5,7 @@
  * @author Denis Chenu <denis@sondages.pro>
  * @copyright 2016 Denis Chenu <http://www.sondages.pro>
  * @license GPL v3
- * @version 0.0.1
+ * @version 0.0.2
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@ class surveysModel extends PluginBase {
     protected $storage = 'DbStorage';
     static protected $description = 'Allow to set survey to model : user can have read/copy access to this specific survey, or can manage it';
     static protected $name = 'surveysModel';
+    static protected $version = '0.0.2';
 
     /**
     * Add function to be used in newDirectRequest/newUnsecureRequest event
@@ -245,7 +246,12 @@ class surveysModel extends PluginBase {
     public function getPluginSettings($getValues=true)
     {
         $pluginSettings=parent::getPluginSettings($getValues);
-
+        // Always return array for current
+        if($getValues)
+        {
+            $pluginSettings['managers']['current']= is_null($pluginSettings['managers']['current']) ? array() : $pluginSettings['managers']['current'];
+            $pluginSettings['users']['current']= is_null($pluginSettings['users']['current']) ? array() : $pluginSettings['users']['current'];
+        }
         $oUsers = User::model()->findAll();
         $aPotentialUsers=array();
         foreach($oUsers as $oUser)
@@ -296,7 +302,6 @@ class surveysModel extends PluginBase {
             "condition"=>"plugin_id=:plugin_id AND model=:model  AND ".Yii::app()->db->quoteColumnName("key")."=:setting AND ".Yii::app()->db->quoteColumnName("value")." LIKE :value",
             "params"=>array(":plugin_id"=>$this->id,":model"=>"Survey",":setting"=>'ismodel',":value"=>"%1%")
         ));
-                            tracevar($oSurveysModels);
 
         if($oSurveysModels)
         {
