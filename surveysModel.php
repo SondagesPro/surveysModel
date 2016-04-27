@@ -99,7 +99,8 @@ class surveysModel extends PluginBase {
                 // Don't test any user right on user : plugin manage all users
                 if($name=='ismodel')
                 {
-                    $aUsers=array_merge($this->get('users'),$this->get('managers'));
+
+                    $aUsers=array_merge((array)$this->get('users'),(array)$this->get('managers'));
                     if($value)
                     {
                         foreach($aUsers as $iUser)
@@ -341,7 +342,7 @@ class surveysModel extends PluginBase {
      */
     private function haveReadRight($iUserID)
     {
-        return in_array($iUserID,$this->get('users')) || $this->haveManageRight($iUserID);
+        return in_array($iUserID,(array)$this->get('users')) || $this->haveManageRight($iUserID);
     }
     /**
      * Test is actual user have manage right on models
@@ -349,7 +350,7 @@ class surveysModel extends PluginBase {
      */
     private function haveManageRight($iUserID)
     {
-        return in_array($iUserID,$this->get('managers')) || Permission::model()->hasGlobalPermission("superadmin",'read', $iUserID);
+        return in_array($iUserID,(array)$this->get('managers')) || Permission::model()->hasGlobalPermission("superadmin",'read', $iUserID);
     }
     /**
      * render an object in json
